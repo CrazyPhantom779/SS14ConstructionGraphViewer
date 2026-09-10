@@ -1,0 +1,10 @@
+.vscode/**
+.gitignore
+**/*.map
+src/**/*.test.js
+*.vsix
+node_modules/@vscode/**
+node_modules/.bin/**
+node_modules/.package-lock.json
+node_modules/yaml/browser/**
+node_modules/yaml/bin.mjs

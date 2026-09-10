@@ -1,0 +1,137 @@
+{
+  "name": "ss14-construction-graph-viewer",
+  "displayName": "SS14 Construction Graph Editor",
+  "description": "Build, view, and edit Space Station 14 constructionGraph YAML prototypes as an interactive tree, with support for construction prototypes and workspace-wide graph discovery.",
+  "version": "0.3.0",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "ss14",
+    "space station 14",
+    "construction graph",
+    "yaml",
+    "robust toolbox"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "ss14ConstructionGraph.editor",
+        "displayName": "SS14 Construction Graph Editor",
+        "selector": [
+          { "filenamePattern": "*.yml" },
+          { "filenamePattern": "*.yaml" }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ss14ConstructionGraph.open",
+        "title": "SS14: Open Construction Graph Editor (beside)",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "ss14ConstructionGraph.openGraphById",
+        "title": "SS14: Open Specific Construction Graph"
+      },
+      {
+        "command": "ss14ConstructionGraph.openGraphByName",
+        "title": "SS14: Open Construction Graph by Name"
+      },
+      {
+        "command": "ss14ConstructionGraph.setAsDefault",
+        "title": "SS14: Always Open This File in the Construction Graph Editor"
+      },
+      {
+        "command": "ss14ConstructionGraph.newGraph",
+        "title": "SS14: New Construction Graph…",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ss14ConstructionGraph.rescanWorkspace",
+        "title": "SS14: Rescan Workspace (entity prototypes, graphs, construction prototypes)",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ss14ConstructionGraph.showRepoMap",
+        "title": "SS14: Show Construction Graph Map (whole workspace)",
+        "icon": "$(type-hierarchy)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ss14ConstructionGraph.open",
+          "when": "resourceLangId == yaml",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "ss14ConstructionGraph.open",
+          "when": "resourceLangId == yaml",
+          "group": "navigation"
+        },
+        {
+          "command": "ss14ConstructionGraph.setAsDefault",
+          "when": "resourceLangId == yaml",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ss14ConstructionGraph.open",
+          "when": "resourceLangId == yaml"
+        },
+        {
+          "command": "ss14ConstructionGraph.setAsDefault",
+          "when": "resourceLangId == yaml"
+        },
+        {
+          "command": "ss14ConstructionGraph.newGraph"
+        },
+        {
+          "command": "ss14ConstructionGraph.rescanWorkspace"
+        },
+        {
+          "command": "ss14ConstructionGraph.showRepoMap"
+        },
+        {
+          "command": "ss14ConstructionGraph.openGraphById",
+          "when": "false"
+        },
+        {
+          "command": "ss14ConstructionGraph.openGraphByName",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SS14 Construction Graph Viewer",
+      "properties": {
+        "ss14ConstructionGraph.autoDetect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an inline CodeLens link above each detected constructionGraph or construction prototype block."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "yaml": "2.4.5"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.29.0"
+  }
+}
