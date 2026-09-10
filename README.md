@@ -121,3 +121,7 @@ node), pan/zoom/search, and a graph switcher when a file has multiple
 - The repo map's layout is a lightweight force simulation, not a guarantee
   of zero overlap on very large workspaces — pan/zoom and the search box are
   there to help navigate dense areas.
+
+## Licensing
+
+This project is licensed under the terms of the CC BY 4.0 license. See LICENSE.md for details.
