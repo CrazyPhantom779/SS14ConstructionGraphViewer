@@ -124,4 +124,4 @@ node), pan/zoom/search, and a graph switcher when a file has multiple
 
 ## Licensing
 
-This project is licensed under the terms of the CC BY 4.0 license. See LICENSE.md for details.
+This project is licensed under the terms of the CC0 1.0 Universal license. See LICENSE.md for details.
