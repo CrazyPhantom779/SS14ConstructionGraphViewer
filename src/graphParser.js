@@ -51,8 +51,15 @@ function stepKindOf(json) {
 function stepsOf(seqNode) {
   if (!seqNode || !seqNode.items) return [];
   return seqNode.items.map((item) => {
-    const params = safeToJSON(item) || {};
-    return { kind: stepKindOf(params), params };
+    // A step's nested `completed:` (used by some multi-stage edges to
+    // change visuals/spawn effects per-step) needs the SAME tag-preserving
+    // extraction as everywhere else - a plain toJSON() on the whole step
+    // would silently lose every !type: tag inside it.
+    const completedSeq = item && typeof item.get === 'function' ? item.get('completed', true) : null;
+    const completed = typedListOf(completedSeq);
+    const fullJson = safeToJSON(item) || {};
+    const { completed: _drop, ...params } = fullJson;
+    return { kind: stepKindOf(params), params, completed };
   });
 }
 
@@ -142,6 +149,10 @@ function fullLineRange(text, itemRange, nextItemRange) {
 }
 
 function parseConstructionGraphs(text) {
+  // Real SS14 files not infrequently start with a UTF-8 BOM (depends on the
+  // editor that last saved them). The yaml parser chokes on it completely -
+  // every single token after it fails - so strip it before anything else.
+  text = text.replace(/^\uFEFF/, '');
   const lineCounter = new YAML.LineCounter();
   const doc = YAML.parseDocument(text, { uniqueKeys: false, lineCounter });
   const graphs = [];
@@ -167,7 +178,24 @@ function parseConstructionGraphs(text) {
 
     const nodes = nodeItems.map((nodeMap, i) => {
       const nodeId = safeToJSON(nodeMap.get('node', true));
-      const entity = safeToJSON(nodeMap.get('entity', true));
+      // `entity` is USUALLY a plain prototype id string, but SS14 also
+      // supports dynamic entity specifiers like
+      // `entity: !type:BoardNodeEntity { container: machine_board }`
+      // (the machine graph uses exactly this). Treating that object as a
+      // string would corrupt it on save, so it's kept as a separate,
+      // explicitly-tagged field instead.
+      const entityNode = nodeMap.get('entity', true);
+      const entityTag = tagLabel(entityNode && entityNode.tag);
+      let entity = null;
+      let entitySpecifier = null;
+      if (entityNode) {
+        if (entityTag) {
+          entitySpecifier = { tag: entityTag, params: safeToJSON(entityNode) || {} };
+        } else {
+          const val = safeToJSON(entityNode);
+          entity = typeof val === 'string' ? val : null;
+        }
+      }
       const actionsSeq = nodeMap.get('actions', true);
       const edgesSeq = nodeMap.get('edges', true);
       const edgeItems = edgesSeq && edgesSeq.items ? edgesSeq.items : [];
@@ -210,6 +238,7 @@ function parseConstructionGraphs(text) {
         index: i,
         id: nodeId,
         entity: entity || null,
+        entitySpecifier,
         range: nodeMap.range.slice(0, 2),
         fullLineRange: fullLineRange(
           text,
@@ -282,6 +311,7 @@ function computeGraphWarnings(graph) {
  * crucially which node is the entry point / finished result). These are
  * very often in a different file than the graph itself. */
 function parseConstructionPrototypes(text) {
+  text = text.replace(/^\uFEFF/, '');
   const lineCounter = new YAML.LineCounter();
   const doc = YAML.parseDocument(text, { uniqueKeys: false, lineCounter });
   const out = [];
@@ -312,9 +342,56 @@ function parseConstructionPrototypes(text) {
   return out;
 }
 
+/** Finds entity prototypes with a `MachineBoard` component - these are what
+ * actually determine "which machine do I get" for the shared Machine graph
+ * (`prototype:` = the resulting machine, `stackRequirements:` = the extra
+ * parts you need in the frame besides the board itself). This lives in a
+ * totally different prototype (`type: entity`), not the construction graph
+ * at all, which is why it's not visible as graph nodes/edges. */
+function parseMachineBoards(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const doc = YAML.parseDocument(text, { uniqueKeys: false });
+  const out = [];
+  const topItems = doc.contents && doc.contents.items ? doc.contents.items : [];
+  topItems.forEach((item) => {
+    if (!item || typeof item.get !== 'function') return;
+    let type;
+    try {
+      type = item.get('type');
+    } catch (e) {
+      return;
+    }
+    if (type !== 'entity') return;
+    const componentsSeq = item.get('components', true);
+    if (!componentsSeq || !componentsSeq.items) return;
+    let boardComponent = null;
+    componentsSeq.items.forEach((c) => {
+      let ctype;
+      try {
+        ctype = c && typeof c.get === 'function' ? c.get('type', true) : null;
+      } catch (e) {
+        ctype = null;
+      }
+      if (safeToJSON(ctype) === 'MachineBoard') boardComponent = c;
+    });
+    if (!boardComponent) return;
+    const json = safeToJSON(item) || {};
+    const boardJson = safeToJSON(boardComponent) || {};
+    if (!boardJson.prototype) return; // abstract/base boards with no result - not a real recipe
+    out.push({
+      id: json.id,
+      name: json.name || null,
+      prototype: boardJson.prototype,
+      stackRequirements: boardJson.stackRequirements || null,
+    });
+  });
+  return out;
+}
+
 module.exports = {
   parseConstructionGraphs,
   parseConstructionPrototypes,
+  parseMachineBoards,
   extractEditable,
   reindentForSave,
   fullLineRange,

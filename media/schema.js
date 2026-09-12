@@ -142,7 +142,7 @@
   // ---- Steps (edge `steps:`) — discriminated by which key is present ----
   const STEP_KINDS = {
     tool: {
-      label: 'Use tool',
+      label: '🔧 Use tool',
       discriminantKey: 'tool',
       fields: [
         F.enumField('tool', 'Tool quality', TOOL_QUALITIES, { default: 'Welding' }),
@@ -150,7 +150,7 @@
       ],
     },
     material: {
-      label: 'Insert material',
+      label: '🧱 Insert material',
       discriminantKey: 'material',
       fields: [
         F.enumField('material', 'Material (stack type)', MATERIALS, {
@@ -163,7 +163,7 @@
       ],
     },
     component: {
-      label: 'Requires component',
+      label: '🔌 Requires component',
       discriminantKey: 'component',
       fields: [
         F.text('component', 'Component name'),
@@ -174,7 +174,7 @@
       ],
     },
     prototype: {
-      label: 'Insert entity prototype',
+      label: '📦 Insert entity prototype',
       discriminantKey: 'prototype',
       fields: [
         F.entityRef('prototype', 'Entity prototype ID'),
@@ -185,7 +185,7 @@
       ],
     },
     tag: {
-      label: 'Insert entity with tag',
+      label: '🏷️ Insert entity with tag',
       discriminantKey: 'tag',
       fields: [
         F.text('tag', 'Tag'),
@@ -196,7 +196,7 @@
       ],
     },
     multiTag: {
-      label: 'Insert entity with tags',
+      label: '🏷️ Insert entity with tags',
       discriminantKey: 'allTags',
       fields: [
         F.taglist('allTags', 'Must have ALL tags'),
@@ -207,7 +207,7 @@
       ],
     },
     generic: {
-      label: 'Custom / other step',
+      label: '❔ Custom / other step',
       discriminantKey: null,
       fields: [],
     },
@@ -345,11 +345,29 @@
     return lines.join('\n');
   }
 
+  /** Dynamic entity specifiers like `!type:BoardNodeEntity { container: x }`
+   * are rare but real (SS14's shared Machine graph uses exactly this) -
+   * rendered as inline flow style to match the convention used in the wild. */
+  function buildEntitySpecifierInline(spec) {
+    const keys = Object.keys(spec.params || {});
+    const parts = keys
+      .map((k) => (spec.params[k] === undefined || spec.params[k] === null || spec.params[k] === '' ? null : `${k}: ${yamlScalar(spec.params[k])}`))
+      .filter(Boolean);
+    return `!type:${spec.tag}` + (parts.length ? ` { ${parts.join(', ')} }` : '');
+  }
+
   /** Build the full dedented YAML text for one node (incl. all its edges). */
   function buildNodeYaml(node) {
     if (node.rawMode) return node.rawText || '';
     const lines = [`node: ${node.id}`];
-    if (node.entity) lines.push(`entity: ${yamlScalar(node.entity)}`);
+    if (node.entitySpecifier) {
+      const value = node.entitySpecifier.rawMode
+        ? node.entitySpecifier.rawText || buildEntitySpecifierInline(node.entitySpecifier)
+        : buildEntitySpecifierInline(node.entitySpecifier);
+      lines.push(`entity: ${value}`);
+    } else if (node.entity) {
+      lines.push(`entity: ${yamlScalar(node.entity)}`);
+    }
     const actions = buildTypedListYaml('actions', node.actions);
     if (actions) lines.push(actions);
     if (node.edges && node.edges.length) {
@@ -374,5 +392,6 @@
     buildEdgeYaml,
     buildTypedItemYaml,
     buildStepYaml,
+    buildEntitySpecifierInline,
   };
 })(window);

@@ -3,6 +3,7 @@ const path = require('path');
 const {
   parseConstructionGraphs,
   parseConstructionPrototypes,
+  parseMachineBoards,
   reindentForSave,
 } = require('./graphParser.js');
 
@@ -55,21 +56,43 @@ function extractEntityPrototypesFromText(text) {
 }
 
 async function scanWorkspace(progress) {
+  if (!vscode.workspace.workspaceFolders || !vscode.workspace.workspaceFolders.length) {
+    // findFiles silently returns nothing without an open workspace folder
+    // (as opposed to just an open file) - surface that clearly instead of
+    // just quietly finding zero of everything.
+    vscode.window.showWarningMessage(
+      'SS14 Construction Graph: no workspace folder is open, so cross-file features (Browse entity, Find usages, the repo map) have nothing to search. Use File > Open Folder… to open the repo root, not just this file.'
+    );
+    return { entityPrototypes: [], constructionGraphs: [], constructionPrototypes: [] };
+  }
+  const FILE_CAP = 30000;
   const files = await vscode.workspace.findFiles(
     '**/*.{yml,yaml}',
     '**/{.git,node_modules,bin,obj}/**',
-    8000
+    FILE_CAP
   );
+  if (files.length >= FILE_CAP) {
+    vscode.window.showWarningMessage(
+      `SS14 Construction Graph: this workspace has at least ${FILE_CAP} yaml files - the scan may not have covered all of them, so some graphs/prototypes could be missing from "Find usages" and the repo map.`
+    );
+  }
   const entityPrototypes = [];
   const constructionGraphs = [];
   const constructionPrototypes = [];
+  const machineBoards = [];
   let done = 0;
   for (const file of files) {
     try {
       const buf = await vscode.workspace.fs.readFile(file);
-      const text = Buffer.from(buf).toString('utf8');
+      const text = Buffer.from(buf).toString('utf8').replace(/^\uFEFF/, '');
       if (/type:\s*entity\b/.test(text)) {
         extractEntityPrototypesFromText(text).forEach((e) => entityPrototypes.push(e));
+        try {
+          parseMachineBoards(text).forEach((b) => machineBoards.push(b));
+        } catch (e) {
+          // a handful of entity files may have YAML quirks the AST parser
+          // trips on - don't let that break the rest of the scan
+        }
       }
       if (looksLikeConstructionGraphFile(text)) {
         const { graphs } = parseConstructionGraphs(text);
@@ -104,7 +127,21 @@ async function scanWorkspace(progress) {
     dedupedEntities.push(item);
   }
   dedupedEntities.sort((a, b) => a.id.localeCompare(b.id));
-  return { entityPrototypes: dedupedEntities, constructionGraphs, constructionPrototypes };
+  const seenBoards = new Set();
+  const dedupedBoards = [];
+  for (const b of machineBoards) {
+    if (!b.id || seenBoards.has(b.id)) continue;
+    seenBoards.add(b.id);
+    dedupedBoards.push(b);
+  }
+  dedupedBoards.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+
+  return {
+    entityPrototypes: dedupedEntities,
+    constructionGraphs,
+    constructionPrototypes,
+    machineBoards: dedupedBoards,
+  };
 }
 
 async function ensureWorkspaceIndex() {
@@ -494,6 +531,10 @@ class GraphEditorProvider {
           await vscode.commands.executeCommand('ss14ConstructionGraph.newGraph');
           return;
         }
+        if (msg.type === 'openRepoMap') {
+          await vscode.commands.executeCommand('ss14ConstructionGraph.showRepoMap');
+          return;
+        }
         if (msg.type === 'selectGraph') {
           graphId = msg.id;
           pushModel();
@@ -510,6 +551,27 @@ class GraphEditorProvider {
             type: 'entityPrototypePicked',
             requestId: msg.requestId,
             value: chosen ? chosen.label : null,
+          });
+          return;
+        }
+        if (msg.type === 'findEntityOutcomes') {
+          // Currently the only dynamic-entity pattern we understand is
+          // `!type:BoardNodeEntity` (the shared Machine graph) resolved via
+          // entities with a `MachineBoard` component. Anything else just
+          // gets an empty (not error) result - the button simply won't do
+          // much for it yet.
+          const index = await ensureWorkspaceIndex();
+          const boards =
+            msg.tag === 'BoardNodeEntity' ? index.machineBoards : [];
+          webviewPanel.webview.postMessage({
+            type: 'entityOutcomesResult',
+            nodeId: msg.nodeId,
+            outcomes: boards.map((b) => ({
+              id: b.id,
+              name: b.name,
+              prototype: b.prototype,
+              stackRequirements: b.stackRequirements,
+            })),
           });
           return;
         }
@@ -768,6 +830,7 @@ function getWebviewHtml(context, webview) {
       <div id="toolbarRight">
         <input id="searchBox" type="text" placeholder="Find node or entity…" />
         <button id="findUsagesBtn" title="Find construction prototypes elsewhere in the workspace that build this graph">🔗 Find usages</button>
+        <button id="repoMapBtn" title="See every construction graph in the workspace at once">🕸️ Repo Map</button>
         <button id="autoArrangeBtn" title="Reset to automatic layout">✨ Auto-arrange</button>
         <button id="fitBtn" title="Fit to view">⤢ Fit</button>
         <button id="addNodeBtn" title="Add a new node" class="primary">+ Node</button>

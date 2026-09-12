@@ -15,7 +15,7 @@ html, body {
   overflow: hidden;
 }
 
-#app { display: flex; flex-direction: column; height: 100vh; }
+#app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
 #toolbar {
   display: flex;
@@ -35,6 +35,10 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+#graphTitleWrap { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+#graphSwitcher { min-width: 120px; max-width: 220px; flex-shrink: 0; }
+#graphSwitcher.hidden { display: none !important; }
 
 #toolbarRight { display: flex; align-items: center; gap: 6px; }
 
@@ -133,6 +137,7 @@ button.danger:hover { background: rgba(241, 76, 76, 0.12); }
 }
 .edge-path.back { stroke-dasharray: 5 4; opacity: 0.75; }
 .edge-path.selected { stroke: var(--vscode-focusBorder, #007acc); stroke-width: 3; }
+.edge-path.hovered { stroke-width: 3; opacity: 1; }
 .edge-hit {
   fill: none;
   stroke: transparent;
@@ -155,10 +160,11 @@ button.danger:hover { background: rgba(241, 76, 76, 0.12); }
 #sidePanel {
   width: 360px;
   flex-shrink: 0;
+  height: 100%;
   border-left: 1px solid var(--vscode-panel-border, #444);
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 #sidePanel.hidden { display: none; }
@@ -320,4 +326,25 @@ select.inline-select {
   padding: 40px;
   text-align: center;
   color: var(--vscode-descriptionForeground, #999);
+}
+
+.outcome-stem, .outcome-link {
+  stroke: var(--vscode-charts-purple, #b180d7);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+  fill: none;
+}
+.outcome-box {
+  fill: var(--vscode-editorWidget-background, #2a2140);
+  stroke: var(--vscode-charts-purple, #b180d7);
+  stroke-width: 1.25;
+  cursor: default;
+}
+.outcome-node:hover .outcome-box { stroke-width: 2; }
+.outcome-label {
+  fill: var(--vscode-editor-foreground);
+  font-size: 10.5px;
+  pointer-events: none;
+  user-select: none;
 }

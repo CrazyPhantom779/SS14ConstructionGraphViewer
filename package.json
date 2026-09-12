@@ -2,7 +2,7 @@
   "name": "ss14-construction-graph-viewer",
   "displayName": "SS14 Construction Graph Editor",
   "description": "Build, view, and edit Space Station 14 constructionGraph YAML prototypes as an interactive tree, with support for construction prototypes and workspace-wide graph discovery.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "local-dev",
   "engines": {
     "vscode": "^1.85.0"

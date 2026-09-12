@@ -48,8 +48,8 @@
   const V_GAP = 118;
   const PADDING = 70;
 
-  /** @type {{graph: any, allGraphIds: string[], usages: any[]}} */
-  let state = { graph: null, allGraphIds: [], usages: [] };
+  /** @type {{graph: any, allGraphIds: string[], usages: any[], outcomes: {nodeId: string, list: any[]}|null}} */
+  let state = { graph: null, allGraphIds: [], usages: [], outcomes: null };
   let selection = null; // { kind: 'node'|'edge', nodeIndex, edgeIndex }
   let transform = { x: 40, y: 40, k: 1 };
   let layoutCache = null; // {pos, layer, bounds}
@@ -65,6 +65,7 @@
       state.graph = msg.graph;
       state.allGraphIds = msg.allGraphIds || [];
       state.usages = [];
+      state.outcomes = null;
       showError(msg.errors && msg.errors.length ? msg.errors[0] : null);
       showWarnings(state.graph ? state.graph.warnings : null);
       layoutCache = null;
@@ -99,22 +100,32 @@
       state.usages = msg.usages || [];
       showUsagesModal(state.usages);
       render();
+    } else if (msg.type === 'entityOutcomesResult') {
+      state.outcomes = { nodeId: msg.nodeId, list: msg.outcomes || [] };
+      render();
+      fitToView();
+      if (openDraft && state.graph && state.graph.nodes[openDraft.nodeIndex].id === msg.nodeId) {
+        renderBuilder();
+      }
     }
   });
 
   function updateGraphSwitcher() {
     if (state.allGraphIds.length > 1) {
       graphSwitcher.classList.remove('hidden');
+      graphSwitcher.style.display = 'inline-block'; // belt-and-suspenders in case a class conflict hides it
       graphSwitcher.innerHTML = '';
       state.allGraphIds.forEach((id) => {
         const opt = document.createElement('option');
         opt.value = id;
-        opt.textContent = id;
+        opt.textContent = id || '(unnamed graph)';
         graphSwitcher.appendChild(opt);
       });
       if (state.graph) graphSwitcher.value = state.graph.id;
     } else {
       graphSwitcher.classList.add('hidden');
+      graphSwitcher.style.display = 'none';
+      graphSwitcher.innerHTML = '';
     }
   }
 
@@ -472,6 +483,11 @@
           });
           const hitEl = el('path', { class: 'edge-hit', d: path.d });
           const wrap = el('g', {}, [pathEl, hitEl]);
+          const tooltip = el('title', {});
+          tooltip.textContent = edgeTooltipText(node, edge);
+          wrap.appendChild(tooltip);
+          wrap.addEventListener('mouseenter', () => pathEl.classList.add('hovered'));
+          wrap.addEventListener('mouseleave', () => pathEl.classList.remove('hovered'));
           wrap.addEventListener('click', (ev) => {
             ev.stopPropagation();
             selection = { kind: 'edge', nodeIndex: ni, edgeIndex };
@@ -483,7 +499,9 @@
           // label: first step summary or step count (computed backend-side)
           const label = edge.label;
           if (label) {
-            const lw = measureText(label, 10.5, 400) + 10;
+            const iconPrefix = edge.steps.length === 1 ? stepKindIcon(edge.steps[0].kind) + ' ' : '';
+            const fullLabel = iconPrefix + label;
+            const lw = measureText(fullLabel, 10.5, 400) + 10;
             const bg = el('rect', {
               x: path.mid.x - lw / 2,
               y: path.mid.y - 8,
@@ -497,7 +515,7 @@
               y: path.mid.y + 4,
               class: `edge-label${isSelected ? ' selected' : ''}`,
             });
-            txt.textContent = label;
+            txt.textContent = fullLabel;
             edgeLayer.appendChild(bg);
             edgeLayer.appendChild(txt);
           }
@@ -593,6 +611,16 @@
       }
 
       const group = el('g', { class: 'node-group' }, children);
+      const nodeTooltip = el('title', {});
+      nodeTooltip.textContent = [
+        node.id,
+        node.entity ? `Entity: ${node.entity}` : node.entitySpecifier ? `Entity: dynamic (!type:${node.entitySpecifier.tag})` : null,
+        node.actions.length ? `Arrival actions: ${node.actions.map((a) => a.tag).join(', ')}` : null,
+        `${node.edges.length} outgoing edge${node.edges.length === 1 ? '' : 's'}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      group.appendChild(nodeTooltip);
       group.addEventListener('click', (ev) => {
         ev.stopPropagation();
         selection = { kind: 'node', nodeIndex: ni };
@@ -605,12 +633,136 @@
 
     g.appendChild(edgeLayer);
     g.appendChild(nodeLayer);
-    svg.appendChild(g);
 
-    if (selection) {
-      // keep side panel content fresh (labels etc. may have changed after edits)
-      showSidePanelForSelection({ skipIfEditing: true });
+    // ---- possible-outcomes fan-out (e.g. machine boards) ----
+    if (state.outcomes && !state.outcomesHidden) {
+      const sourceIdx = graph.nodes.findIndex((n) => n.id === state.outcomes.nodeId);
+      const sourcePos = sourceIdx >= 0 ? layout.pos[sourceIdx] : null;
+      if (sourcePos) {
+        const outcomesLayer = renderOutcomesFanOut(sourcePos, state.outcomes.list);
+        g.appendChild(outcomesLayer);
+      }
     }
+
+    svg.appendChild(g);
+  }
+
+  /** A simple wrapping-grid fan-out below a node, for "possible outcomes"
+   * (e.g. every machine a Machine Frame could become depending on which
+   * circuit board you insert). Deliberately NOT part of the main layered
+   * layout - these aren't graph nodes, just a lightweight visual list. */
+  function renderOutcomesFanOut(sourcePos, list) {
+    const layer = el('g', { class: 'outcomes-layer' });
+    if (!list.length) return layer;
+
+    const cols = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(list.length * 2.2))));
+    const cellW = 150;
+    const cellH = 34;
+    const gapY = 26;
+    const totalW = cols * cellW;
+    const startX = sourcePos.x - totalW / 2 + cellW / 2;
+    const startY = sourcePos.y + sourcePos.h / 2 + gapY;
+
+    // one connecting line from the source node down to the top of the fan-out
+    layer.appendChild(
+      el('line', {
+        class: 'outcome-stem',
+        x1: sourcePos.x,
+        y1: sourcePos.y + sourcePos.h / 2,
+        x2: sourcePos.x,
+        y2: startY - 6,
+      })
+    );
+
+    list.forEach((item, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = startX + col * cellW;
+      const y = startY + row * (cellH + 8);
+
+      const g2 = el('g', { class: 'outcome-node' });
+      g2.appendChild(
+        el('line', {
+          class: 'outcome-link',
+          x1: sourcePos.x,
+          y1: startY - 6,
+          x2: x,
+          y2: y,
+        })
+      );
+      g2.appendChild(
+        el('rect', { x: x - cellW / 2 + 4, y: y - cellH / 2, width: cellW - 8, height: cellH, rx: 6, class: 'outcome-box' })
+      );
+      const label = el('text', { x, y: y + 4, 'text-anchor': 'middle', class: 'outcome-label' });
+      label.textContent = item.prototype || item.id;
+      g2.appendChild(label);
+
+      const reqs = item.stackRequirements
+        ? Object.entries(item.stackRequirements).map(([k, v]) => `${k} x${v}`).join(', ')
+        : '';
+      const titleEl = el('title', {});
+      titleEl.textContent = `${item.name || item.id}${reqs ? '\nAlso needs: ' + reqs : ''}`;
+      g2.appendChild(titleEl);
+
+      layer.appendChild(g2);
+    });
+
+    return layer;
+  }
+
+  function stepKindIcon(kind) {
+    return (
+      {
+        tool: '🔧',
+        material: '🧱',
+        component: '🔌',
+        prototype: '📦',
+        tag: '🏷️',
+        multiTag: '🏷️',
+        generic: '❔',
+      }[kind] || ''
+    );
+  }
+
+  function stepShortLabelJs(step) {
+    const p = step.params || {};
+    switch (step.kind) {
+      case 'tool':
+        return `Tool: ${p.tool}${p.doAfter ? ` (${p.doAfter}s)` : ''}`;
+      case 'material':
+        return `Material: ${p.material} x${p.amount != null ? p.amount : '?'}`;
+      case 'component':
+        return `Component: ${p.component}`;
+      case 'prototype':
+        return `Prototype: ${p.prototype}`;
+      case 'tag':
+        return `Tag: ${p.tag}`;
+      case 'multiTag': {
+        const bits = [];
+        if (p.allTags) bits.push(`all(${p.allTags.join(', ')})`);
+        if (p.anyTags) bits.push(`any(${p.anyTags.join(', ')})`);
+        return `Tags: ${bits.join(' + ')}`;
+      }
+      default:
+        return 'Custom step';
+    }
+  }
+
+  function edgeTooltipText(node, edge) {
+    const parts = [`${node.id} → ${edge.to}`];
+    if (edge.conditions.length) {
+      parts.push('Conditions: ' + edge.conditions.map((c) => c.tag).join(', '));
+    }
+    if (edge.steps.length) {
+      parts.push(
+        'Steps:\n' +
+          edge.steps.map((s, i) => `  ${i + 1}. ${stepKindIcon(s.kind)} ${stepShortLabelJs(s)}`).join('\n')
+      );
+    }
+    if (edge.completed.length) {
+      parts.push('On completed: ' + edge.completed.map((c) => c.tag).join(', '));
+    }
+    return parts.join('\n');
   }
 
   function groupByTarget(edges) {
@@ -774,9 +926,24 @@
   function fitToView() {
     if (!layoutCache) return;
     const rect = canvasWrap.getBoundingClientRect();
-    const bw = layoutCache.bounds.w + PADDING * 2;
-    const bh = layoutCache.bounds.h + PADDING * 2;
-    const k = Math.max(0.15, Math.min(1.3, Math.min(rect.width / bw, rect.height / bh)));
+    let bw = layoutCache.bounds.w + PADDING * 2;
+    let bh = layoutCache.bounds.h + PADDING * 2;
+
+    if (state.outcomes && !state.outcomesHidden && state.graph) {
+      const sourceIdx = state.graph.nodes.findIndex((n) => n.id === state.outcomes.nodeId);
+      const sourcePos = sourceIdx >= 0 ? layoutCache.pos[sourceIdx] : null;
+      const list = state.outcomes.list;
+      if (sourcePos && list.length) {
+        const cols = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(list.length * 2.2))));
+        const rows = Math.ceil(list.length / cols);
+        const extraHeight = rows * (34 + 8) + 26 + PADDING;
+        const fanWidth = cols * 150;
+        bh += extraHeight;
+        bw = Math.max(bw, fanWidth + PADDING * 2);
+      }
+    }
+
+    const k = Math.max(0.1, Math.min(1.3, Math.min(rect.width / bw, rect.height / bh)));
     transform.k = k;
     transform.x = (rect.width - layoutCache.bounds.w * k) / 2;
     transform.y = PADDING * k;
@@ -870,6 +1037,7 @@
     return {
       kind: step.kind, // 'generic' for unrecognized shapes - still fully editable via "Other fields"
       params: Object.assign({}, step.params),
+      completed: (step.completed || []).map((c) => typedItemToDraft(c, S.ACTION_TYPES)),
       rawMode: false,
       rawText: '',
     };
@@ -880,6 +1048,15 @@
       originalId: node.id,
       id: node.id,
       entity: node.entity || '',
+      entitySpecifier: node.entitySpecifier
+        ? {
+            tag: node.entitySpecifier.tag,
+            params: Object.assign({}, node.entitySpecifier.params),
+            _schema: null,
+            rawMode: false,
+            rawText: '',
+          }
+        : null,
       actions: node.actions.map((a) => typedItemToDraft(a, S.ACTION_TYPES)),
       edges: node.edges.map((e) => ({
         to: e.to,
@@ -1406,6 +1583,34 @@
       };
       schema.fields.forEach((f) => renderField(block, f, step.params, fieldsWrappedOnChange));
       renderOtherFields(block, step.params, schema.fields, fieldsWrappedOnChange, step.kind !== 'generic');
+
+      const completedWrappedOnChange = (dirty) => {
+        step.rawText = '';
+        onChange(dirty);
+      };
+      if (step.completed.length || step._showCompleted) {
+        const completedWrap = document.createElement('div');
+        completedWrap.style.marginTop = '6px';
+        completedWrap.style.paddingTop = '6px';
+        completedWrap.style.borderTop = '1px dashed var(--vscode-panel-border, #555)';
+        renderTypedList(
+          completedWrap,
+          `On this step completing (effects like visual/sprite changes)`,
+          step.completed,
+          S.ACTION_TYPES,
+          completedWrappedOnChange
+        );
+        block.appendChild(completedWrap);
+      } else {
+        const revealBtn = document.createElement('button');
+        revealBtn.textContent = '+ Add effect on step completing (advanced)';
+        revealBtn.style.marginTop = '6px';
+        revealBtn.addEventListener('click', () => {
+          step._showCompleted = true;
+          onChange(false);
+        });
+        block.appendChild(revealBtn);
+      }
     }
     return block;
   }
@@ -1610,17 +1815,83 @@
       spacer0.style.height = '8px';
       sidePanelBody.appendChild(spacer0);
 
-      sidePanelBody.appendChild(fieldLabel('Entity prototype (blank = no entity yet)'));
-      const entityInput = document.createElement('input');
-      entityInput.type = 'text';
-      entityInput.placeholder = 'e.g. Girder, WallSolid…';
-      entityInput.value = ns.entity;
-      entityInput.addEventListener('input', () => {
-        ns.entity = entityInput.value;
-        ns.rawText = '';
-        markDirtyLight();
-      });
-      sidePanelBody.appendChild(entityInput);
+      if (ns.entitySpecifier) {
+        sidePanelBody.appendChild(fieldLabel('Entity: dynamic specifier'));
+        const note = document.createElement('div');
+        note.className = 'field-label';
+        note.style.marginBottom = '4px';
+        note.textContent =
+          'This node\'s actual entity is decided at build time (e.g. by what\'s inserted into a container), not a fixed prototype id.';
+        sidePanelBody.appendChild(note);
+        const entityOnChange = (dirty) => {
+          ns.rawText = '';
+          onChange(dirty);
+        };
+        sidePanelBody.appendChild(
+          renderTypedItemBlock(ns.entitySpecifier, {}, entityOnChange, () => {
+            ns.entitySpecifier = null;
+            ns.entity = '';
+            onChange(true);
+          })
+        );
+
+        if (ns.entitySpecifier.tag === 'BoardNodeEntity') {
+          const thisNodeId = state.graph.nodes[openDraft.nodeIndex].id;
+          const haveOutcomes = state.outcomes && state.outcomes.nodeId === thisNodeId;
+          if (haveOutcomes) {
+            const count = state.outcomes.list.length;
+            const summary = document.createElement('div');
+            summary.className = 'field-label';
+            summary.style.margin = '4px 0';
+            summary.textContent = `${count} possible outcome${count === 1 ? '' : 's'} found (shown fanning out from this node in the diagram).`;
+            sidePanelBody.appendChild(summary);
+            const toggleBtn = document.createElement('button');
+            toggleBtn.textContent = state.outcomesHidden ? 'Show in diagram' : 'Hide from diagram';
+            toggleBtn.addEventListener('click', () => {
+              state.outcomesHidden = !state.outcomesHidden;
+              render();
+              renderBuilder();
+            });
+            sidePanelBody.appendChild(toggleBtn);
+          } else {
+            const outcomesBtn = document.createElement('button');
+            outcomesBtn.className = 'primary';
+            outcomesBtn.textContent = '🔌 Show possible outcomes';
+            outcomesBtn.title =
+              'Scan the workspace for entities with a MachineBoard component - each one is a different machine you can end up with here.';
+            outcomesBtn.addEventListener('click', () => {
+              outcomesBtn.disabled = true;
+              outcomesBtn.textContent = 'Scanning workspace…';
+              vscode.postMessage({
+                type: 'findEntityOutcomes',
+                tag: 'BoardNodeEntity',
+                nodeId: thisNodeId,
+              });
+            });
+            sidePanelBody.appendChild(outcomesBtn);
+          }
+        }
+
+        const revertBtn = document.createElement('button');
+        revertBtn.textContent = 'Replace with a plain entity id instead';
+        revertBtn.addEventListener('click', () => {
+          ns.entitySpecifier = null;
+          onChange(true);
+        });
+        sidePanelBody.appendChild(revertBtn);
+      } else {
+        sidePanelBody.appendChild(fieldLabel('Entity prototype (blank = no entity yet)'));
+        const entityInput = document.createElement('input');
+        entityInput.type = 'text';
+        entityInput.placeholder = 'e.g. Girder, WallSolid…';
+        entityInput.value = ns.entity;
+        entityInput.addEventListener('input', () => {
+          ns.entity = entityInput.value;
+          ns.rawText = '';
+          markDirtyLight();
+        });
+        sidePanelBody.appendChild(entityInput);
+      }
 
       const spacer1 = document.createElement('div');
       spacer1.style.height = '10px';
@@ -1834,6 +2105,10 @@
   }
 
   // ---------- find usages (cross-file: construction prototypes that build this graph) ----------
+  document.getElementById('repoMapBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'openRepoMap' });
+  });
+
   document.getElementById('findUsagesBtn').addEventListener('click', () => {
     if (!state.graph) return;
     const btn = document.getElementById('findUsagesBtn');
